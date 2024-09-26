@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebRTC Voice Call</title>
+</head>
+<body>
+    <!-- <h1>WebRTC Voice Call</h1> -->
+    <button id="start-call">Start Call</button>
+    <audio id="localAudio" autoplay muted></audio>
+    <audio id="remoteAudio" autoplay></audio>
+
+    <script>
+        const startCallButton = document.getElementById('start-call');
+        const localAudio = document.getElementById('localAudio');
+        const remoteAudio = document.getElementById('remoteAudio');
+    
+        let localStream;
+        let peerConnection;
+        const configuration = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+        const socket = new WebSocket('ws://localhost:3000');
+    
+        startCallButton.onclick = async () => {
+            localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            localAudio.srcObject = localStream;
+    
+            peerConnection = new RTCPeerConnection(configuration);
+            localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+    
+            peerConnection.onicecandidate = event => {
+                if (event.candidate) {
+                    socket.send(JSON.stringify({ 'ice': event.candidate }));
+                }
+            };
+    
+            peerConnection.ontrack = event => {
+                remoteAudio.srcObject = event.streams[0];
+            };
+    
+            const offer = await peerConnection.createOffer();
+            await peerConnection.setLocalDescription(offer);
+            socket.send(JSON.stringify({ 'sdp': offer }));
+        };
+    
+        socket.onmessage = async (message) => {
+            console.log('WebSocket message received:', message.data);
+            
+            // Check if message is a Blob
+            if (message.data instanceof Blob) {
+                const text = await message.data.text(); // Convert Blob to text
+                console.log('Blob data received:', text);
+                try {
+                    const data = JSON.parse(text); // Attempt to parse as JSON
+                    handleWebSocketData(data);
+                } catch (error) {
+                    console.error('Error parsing Blob data:', error);
+                }
+            } else {
+                try {
+                    const data = JSON.parse(message.data); // Attempt to parse JSON
+                    handleWebSocketData(data);
+                } catch (error) {
+                    console.error('Error parsing message:', error);
+                }
+            }
+        };
+    
+        function handleWebSocketData(data) {
+            if (data.sdp) {
+                peerConnection.setRemoteDescription(new RTCSessionDescription(data.sdp)).catch(console.error);
+                if (data.sdp.type === 'offer') {
+                    peerConnection.createAnswer().then(answer => {
+                        peerConnection.setLocalDescription(answer).then(() => {
+                            socket.send(JSON.stringify({ 'sdp': answer }));
+                        });
+                    });
+                }
+            } else if (data.ice) {
+                peerConnection.addIceCandidate(new RTCIceCandidate(data.ice)).catch(console.error);
+            }
+        }
+    </script>
+    
+    
+    
+</body>
+</html>
